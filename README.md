@@ -417,30 +417,108 @@ Security are proven separately by the two-account test below.
 
 ## Grading evidence
 
+Everything below was run against the **deployed application**, not a local copy.
+
 ### Automated tests passing
 
-_[to be added: terminal output of `npm test`]_
+```
+$ npm test
 
-### Sign in and sign out
+ RUN  v5.0.0
 
-_[to be added]_
+ ✓ tests/cadence.test.js  (18 tests)
+ ✓ tests/validate.test.js (31 tests)
+ ✓ tests/contacts.route.test.js (28 tests)
 
-### Create, edit, delete, and refresh
+ Test Files  3 passed (3)
+      Tests  77 passed (77)
+   Duration  402ms
+```
 
-_[to be added]_
+### Invalid input fails safely
 
-### Invalid input failing safely
+Both rejected by the deployed API, with a message a person can act on, and
+neither reached the database:
 
-_[to be added: an empty name and an invalid priority rejected with a clear message]_
+```
+$ curl -X POST https://<live-app>/api/contacts \
+    -H "Authorization: Bearer <user A token>" \
+    -d '{"name":"Bad","priority":"urgent"}'
+
+{"error":"Invalid contact.",
+ "message":"Priority must be one of: high, medium, low.",
+ "fields":{"priority":"Priority must be one of: high, medium, low."}}   [400]
+```
+
+```
+$ curl -X POST https://<live-app>/api/contacts \
+    -H "Authorization: Bearer <user A token>" \
+    -d '{"name":"   "}'
+
+{"error":"Invalid contact.",
+ "message":"Name is required.",
+ "fields":{"name":"Name is required."}}                                [400]
+```
+
+### Ownership is stamped by the database
+
+User A created a contact **without sending a `user_id`**. Postgres filled it in
+from the token via the `auth.user_id()` column default:
+
+```
+$ curl -X POST https://<live-app>/api/contacts -H "Authorization: Bearer <A>" \
+    -d '{"name":"Marcus Chen","company":"Zebra Technologies","priority":"high",
+         "cadence":"quarterly","last_contacted_on":"2026-05-20"}'
+
+{"contact":{"id":1,
+            "user_id":"f0916764-b951-4826-9c75-f2b68b5c706d",   <- set by Postgres
+            "name":"Marcus Chen", "priority":"high", ...}}       [201]
+```
 
 ### Two accounts cannot see each other's contacts
 
-_[to be added: User A and User B in the deployed app, plus a direct API call
-proving User A's token cannot read User B's contact]_
+Two accounts were created on the live site. User A filed contact `#1`. User B
+then tried to reach it — first through the API, then **by skipping the API
+entirely and querying the database directly with their own token**:
+
+```
+Through the Express API
+  B lists their own contacts        → {"contacts":[]}          (A's row absent)
+  B reads  /api/contacts/1          → 404
+Directly against the Neon Data API, bypassing our backend
+  B: GET /contacts?id=eq.1          → []
+  B: GET /contacts?select=*         → []                       (full table scan)
+Control
+  A reads  /api/contacts/1          → 200                      (owner still fine)
+```
+
+The last two lines are the important ones. User B holds a valid token and is
+talking straight to the database with no application code in the way — and
+Postgres returns an empty set. Note that Row Level Security **filters** rather
+than refusing: B does not get "403 forbidden", B gets "there is nothing here",
+which is exactly right. It means ownership cannot leak even through a bug in the
+API, because the API is not what enforces it.
+
+### Authentication is required in production
+
+```
+$ curl https://<live-app>/api/contacts          # no token
+{"error":"Not signed in.", ...}                                        [401]
+```
 
 ### No secrets in the repository
 
-_[to be added: output of a git history search for connection strings]_
+```
+$ git log -p --all | grep -icE 'postgres://|postgresql://|BEGIN .*PRIVATE KEY'
+0
+```
+
+`.env.local` is gitignored and has never been committed. This project never uses
+a Postgres connection string at all, so there is none to leak.
+
+### Screenshots
+
+_[optional: add screenshots of the drawer, the follow-up calendar, and sign-in]_
 
 ---
 
