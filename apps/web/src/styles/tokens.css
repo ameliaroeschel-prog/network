@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   Card Catalog — component styles
+   --------------------------------------------------------------------------
+   Colours, type, and spacing are defined in tailwind.config.js. This file
+   builds the reusable pieces on top of them, so the JSX stays readable:
+   <article className="card"> rather than fifteen utility classes.
+   ========================================================================== */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-paper-deep text-ink font-serif antialiased;
+    /* A faint paper grain over the whole desk. */
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(31, 27, 22, 0.035) 1px, transparent 0);
+    background-size: 4px 4px;
+  }
+
+  /* One visible focus style everywhere, for keyboard users. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ink ring-offset-2 ring-offset-paper;
+  }
+
+  /* Respect a system setting for reduced motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---- Labels ---------------------------------------------------------- */
+  /* The typewriter caption above a value, as on a real catalog card. */
+  .label {
+    @apply font-label text-label uppercase text-ink-faint;
+  }
+
+  /* ---- Cards ----------------------------------------------------------- */
+  .card {
+    @apply relative flex flex-col overflow-hidden rounded-card border border-rule-strong
+           bg-paper shadow-card transition-shadow duration-150;
+  }
+
+  .card:hover {
+    @apply shadow-lifted;
+  }
+
+  /* The coloured tab down the left edge showing priority. */
+  .card-tab {
+    @apply absolute inset-y-0 left-0 w-1.5;
+  }
+
+  /* Everything sits to the right of the tab. */
+  .card-body {
+    @apply flex flex-1 flex-col gap-3 py-4 pl-6 pr-4;
+  }
+
+  /* A ruled line between fields, like the printed rules on an index card. */
+  .card-rule {
+    @apply border-t border-rule;
+  }
+
+  /* ---- Buttons --------------------------------------------------------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-card border
+           px-4 py-2 font-label text-label uppercase transition-colors
+           duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn border-ink bg-ink text-paper hover:bg-ink-soft hover:border-ink-soft;
+  }
+
+  .btn-secondary {
+    @apply btn border-rule-strong bg-paper text-ink hover:bg-paper-aged;
+  }
+
+  .btn-danger {
+    @apply btn border-priority-high bg-paper text-priority-high
+           hover:bg-priority-high hover:text-paper;
+  }
+
+  .btn-quiet {
+    @apply btn border-transparent bg-transparent text-ink-soft hover:bg-paper-aged;
+  }
+
+  /* ---- Form fields ----------------------------------------------------- */
+  .field {
+    @apply flex flex-col gap-1.5;
+  }
+
+  .input {
+    @apply w-full rounded-card border border-rule-strong bg-paper px-3 py-2
+           font-serif text-[0.95rem] text-ink placeholder:text-ink-faint
+           focus:border-ink focus:outline-none;
+  }
+
+  /* A field that failed validation. The red border is backed up by a written
+     message, so colour is never the only signal. */
+  .input-invalid {
+    @apply border-priority-high focus:border-priority-high;
+  }
+
+  .field-error {
+    @apply font-label text-label normal-case text-priority-high;
+  }
+
+  .field-hint {
+    @apply font-label text-label normal-case text-ink-faint;
+  }
+
+  /* ---- Priority and status chips --------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-card border px-2 py-0.5
+           font-label text-label uppercase;
+  }
+
+  /* ---- Layout ---------------------------------------------------------- */
+  .drawer {
+    @apply mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6 lg:px-8;
+  }
+
+  .sheet {
+    @apply rounded-card border border-rule-strong bg-paper p-5 shadow-card;
+  }
+
+  /* ---- Skeletons (loading state) --------------------------------------- */
+  .skeleton {
+    @apply animate-pulse rounded-card bg-paper-aged;
+  }
+
+  /* ---- Calendar -------------------------------------------------------- */
+  .calendar-cell {
+    @apply relative flex min-h-[5.5rem] flex-col gap-1 border border-rule
+           bg-paper p-1.5 text-left transition-colors hover:bg-paper-aged;
+  }
+
+  .calendar-cell-muted {
+    @apply bg-paper-aged/40 text-ink-faint;
+  }
+
+  .calendar-cell-today {
+    @apply border-ink ring-1 ring-inset ring-ink;
+  }
+}
+
+@layer utilities {
+  /* Hides content visually but keeps it available to screen readers. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    @apply sr-only;
+  }
+}
