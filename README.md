@@ -8,7 +8,7 @@ depending on memory. Every card belongs to exactly one account, and that
 ownership is enforced by Postgres itself through Row Level Security — not by the
 application code, and not by hiding a button in the interface.
 
-**Live app:** _[to be added after deployment]_
+**Live app:** https://temporary-sonic-atoll-xkwtx4t.vercel.app
 
 ---
 

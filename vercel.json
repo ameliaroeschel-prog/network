@@ -4,16 +4,8 @@
   "outputDirectory": "apps/web/dist",
   "framework": null,
   "rewrites": [
-    {
-      "comment": "Anything under /api goes to the Express serverless function.",
-      "source": "/api/(.*)",
-      "destination": "/api"
-    },
-    {
-      "comment": "Every other path serves the React app, so client-side routing works on a hard refresh.",
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
