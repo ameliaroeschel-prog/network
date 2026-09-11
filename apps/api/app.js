@@ -14,6 +14,7 @@
 
 import express from 'express';
 import { requireAuth } from './auth.js';
+import { authProxyRouter } from './authProxy.js';
 import { contactsRouter } from './routes/contacts.js';
 
 export function createApp() {
@@ -23,6 +24,16 @@ export function createApp() {
   app.set('trust proxy', 1);
   // Do not advertise what the server is built with.
   app.disable('x-powered-by');
+
+  // ---- Auth proxy --------------------------------------------------------
+  // Mounted BEFORE the JSON parser on purpose: the proxy forwards the raw
+  // request bytes to Neon unchanged, so express.raw() hands it a Buffer
+  // rather than a parsed object.
+  app.use(
+    '/api/auth',
+    express.raw({ type: () => true, limit: '100kb' }),
+    authProxyRouter,
+  );
 
   // Reject oversized bodies before parsing them. Our largest field is 5000
   // characters, so 100kb is generous.

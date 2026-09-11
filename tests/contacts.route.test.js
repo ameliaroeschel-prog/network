@@ -54,6 +54,15 @@ vi.mock('../apps/api/dataApi.js', () => ({
  * need a live key from Neon. Signature verification is exercised against the
  * real service during the manual two-account test documented in the README.
  */
+/**
+ * The auth proxy just forwards requests to Neon, so there is nothing useful to
+ * assert about it here. It is mocked out because the real module reads
+ * NEON_AUTH_BASE_URL when it loads, which these tests deliberately do not set.
+ */
+vi.mock('../apps/api/authProxy.js', () => ({
+  authProxyRouter: (req, res) => res.status(200).json({ proxied: true }),
+}));
+
 vi.mock('../apps/api/auth.js', () => ({
   requireAuth: (req, res, next) => {
     const header = req.headers.authorization ?? '';
