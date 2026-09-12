@@ -97,45 +97,85 @@ That costs a little more work and buys two things:
 
 ## Architecture
 
+Everything the browser talks to is on **one origin — this app's own**. It never
+contacts Neon directly.
+
 ```
    Browser — React + Vite
       │
-      ├── sign up / sign in / sign out ─────────►  Neon Managed Better Auth
-      │                                             issues a signed token
-      │                                             that expires in 15 minutes
-      │
-      └── fetch /api/contacts
-          Authorization: Bearer <token>
-                │
-                ▼
-      Express API — apps/api
-        1. verify the token's signature against Neon's public keys
-        2. validate the payload, and strip any field the client
-           should not be able to set
-        3. forward that same user token onward
-                │
-                ▼
-      Neon Data API — a REST layer over Postgres
-                │
-                ▼
-      Neon Postgres
-        Row Level Security filters every query to rows
-        where user_id = auth.user_id()
+      ├── POST /api/auth/sign-in  ───┐
+      │   (also sign-up, sign-out,   │   same origin, so the session
+      │    get-session, token)       │   cookie is first-party
+      │                              │
+      └── GET  /api/contacts  ───────┤
+          Authorization: Bearer …    │
+                                     ▼
+                        Express API — apps/api
+                          │
+        ┌─────────────────┴──────────────────┐
+        │                                    │
+   auth proxy                          contacts routes
+   forwards to Neon,                     1. verify the token's signature
+   rewrites the cookie                      against Neon's public keys
+   for our domain                        2. validate; strip any field the
+        │                                   client must not set
+        │                                 3. forward that same user token
+        ▼                                    │
+   Neon Managed Better Auth                  ▼
+   issues a signed token               Neon Data API
+   that expires in 15 minutes          a REST layer over Postgres
+                                             │
+                                             ▼
+                                       Neon Postgres
+                                       Row Level Security filters every
+                                       query to rows where
+                                       user_id = auth.user_id()
 ```
 
 ### The request flow, in words
 
-1. You sign in. Neon Auth gives the browser a **signed token** that says who you
-   are. It is signed with a private key only Neon holds.
-2. The browser asks our API for contacts, attaching that token.
-3. The API **verifies the signature** using Neon's published public key. A forged
+1. You sign in against `/api/auth`, on this app's own domain. Express forwards
+   that to Neon Auth and passes the session cookie back, rewritten so it belongs
+   to our domain.
+2. Neon Auth issues a **signed token** saying who you are, signed with a private
+   key only Neon holds.
+3. The browser asks our API for contacts, attaching that token.
+4. The API **verifies the signature** using Neon's published public key. A forged
    token fails here, because forging one would require Neon's private key.
-4. The API validates the request, then calls the Neon Data API **passing your
+5. The API validates the request, then calls the Neon Data API **passing your
    token along unchanged**.
-5. Postgres reads the token, so `auth.user_id()` returns your user ID, and the
+6. Postgres reads the token, so `auth.user_id()` returns your user ID, and the
    Row Level Security policies filter the query to your rows.
 
-### The one architectural decision worth explaining
+### Why sign-in goes through our own backend
+
+The first version had the browser call Neon Auth directly. It worked for some
+people and silently failed for others, which is the worst kind of bug.
+
+The cause: Neon Auth is on a different domain (`…neon.tech`) to the app
+(`…vercel.app`), so its session cookie was a **third-party cookie**. Safari
+blocks those by default and Chrome is phasing them out. The account would be
+created, then the app would immediately behave as though nobody was signed in.
+
+Routing sign-in through `/api/auth` makes the browser talk only to our own
+domain, so the cookie is first-party and every browser keeps it. Three details
+had to be right, and each one silently voided the cookie on its own:
+
+| Cookie attribute | Handling | Why |
+| --- | --- | --- |
+| `Secure` | **kept** | The `__Secure-` name prefix is only valid on a cookie that carries `Secure`. Removing it invalidates the whole cookie. |
+| `Partitioned` | **removed** | It is for cross-site cookies, and is invalid alongside `SameSite=Lax`. |
+| `SameSite` | `None` → `Lax` | The cookie is first-party now. |
+
+One more: Neon only issues the cookie when the request carries an `Origin`
+header, and browsers omit `Origin` on same-origin GETs — which is now most of
+our traffic. So the proxy always sends one.
+
+This is also the clearest example of the separate backend earning its keep: it
+is not just passing requests along, it is solving a problem the frontend
+cannot solve alone.
+
+### Why the backend forwards your token
 
 A backend can reach Neon Postgres two ways, and they have very different
 security properties:
@@ -223,18 +263,20 @@ Copy `.env.example` to `.env.local` and fill in the real values.
 
 | Variable | Visibility | What it is |
 | --- | --- | --- |
-| `VITE_NEON_AUTH_URL` | Public | Neon Managed Better Auth endpoint, used by the browser to sign in |
-| `VITE_NEON_DATA_API_URL` | Public | Neon Data API endpoint |
-| `NEON_AUTH_BASE_URL` | **Server only** | Used by the API to fetch Neon's public keys and verify tokens |
+| `NEON_AUTH_BASE_URL` | **Server only** | Two jobs: verifying incoming tokens against Neon's public keys, and the upstream target of the auth proxy |
 | `NEON_DATA_API_URL` | **Server only** | Where the API sends database requests |
 | `PORT` | Server only | Local API port. Not needed in production. |
 
-### On the two public variables
+### There are no public variables
 
-Anything prefixed `VITE_` is compiled into the JavaScript the browser downloads,
-so treat it as public. That is safe here, and by design: these are public
-endpoints, and a stranger holding both URLs with no valid session can read
-nothing. Row Level Security is what protects the data, not the secrecy of a URL.
+This project ships **no `VITE_` variables at all**. The browser talks only to
+this app's own `/api` routes — for contacts *and* for signing in — so it never
+needs a Neon URL, and none is compiled into the JavaScript it downloads.
+
+That is a consequence of the auth proxy described in
+[Authentication](#authentication-and-ownership): sign-in goes through
+`/api/auth`, which Express forwards to Neon. Fewer moving parts in the browser,
+and one less piece of infrastructure exposed to it.
 
 ### A deliberate difference from the brief
 
@@ -242,11 +284,16 @@ The assignment lists `NEXT_PUBLIC_NEON_AUTH_URL`, `NEXT_PUBLIC_NEON_DATA_API_URL
 `DATABASE_URL`, and `NEON_AUTH_COOKIE_SECRET`.
 
 - The `NEXT_PUBLIC_` prefix is specific to Next.js. This project is React with
-  Vite and a separate Express backend, so the equivalent prefix is `VITE_`. The
-  variables serve exactly the same purpose.
+  Vite and a separate Express backend. It ended up needing **no** public
+  variable of any kind, for the reason above.
 - **`DATABASE_URL` and `NEON_AUTH_COOKIE_SECRET` are not used at all.** All
   database access goes through the Data API carrying the user's token, and
   sessions are managed by Neon rather than by our own cookies.
+
+  Not having `DATABASE_URL` anywhere is a security win rather than an omission:
+  a connection string that does not exist in the repository cannot leak from
+  it. It would also have been actively harmful here — see
+  [Why the backend forwards your token](#why-the-backend-forwards-your-token).
 
 Not needing a Postgres connection string is a security improvement, not a gap: a
 credential that never exists in the project cannot be committed, leaked, or
@@ -305,6 +352,12 @@ Sign-up, sign-in, and sign-out all go through **Neon Managed Better Auth**. This
 project never stores or even sees a password. Neon issues a signed token that
 expires after about 15 minutes; the frontend requests a fresh one before each API
 call rather than holding on to it.
+
+The browser reaches Neon Auth through `/api/auth` on this app's own domain
+rather than calling it directly, so the session cookie is first-party and works
+in every browser. The reasoning, and the three cookie attributes that have to be
+exactly right, are in
+[Why sign-in goes through our own backend](#why-sign-in-goes-through-our-own-backend).
 
 ### The ownership rule
 
@@ -506,6 +559,41 @@ $ curl https://<live-app>/api/contacts          # no token
 {"error":"Not signed in.", ...}                                        [401]
 ```
 
+### The full journey, run in a real browser against the live site
+
+Driven through the deployed URL, not localhost, and not with `curl` — `curl`
+handles cookies differently from a browser, which is exactly how the original
+sign-in bug slipped through.
+
+| Step | Result |
+| --- | --- |
+| Create an account | signed in, empty drawer shown |
+| Submit a card with no name | `Name is required.` shown inline, nothing saved |
+| File a card | card appears with its priority tab |
+| Edit it — company, role, where met, notes, priority, last contacted | all fields saved and rendered |
+| Follow-up date | last contacted 14 Jun + quarterly → **"Due in 2 days"** (correct for 11 Sep) |
+| Hard refresh | still signed in, card still there |
+| Sign out | returned to the sign-in screen |
+| Sign back in | card loaded from Postgres |
+
+### Two accounts, re-verified in production after the auth change
+
+User B, signed in in the same browser, attempting to reach User A's contact:
+
+```
+GET    /api/contacts/4   as User B  →  404      (cannot read)
+PATCH  /api/contacts/4   as User B  →  404      (cannot edit)
+DELETE /api/contacts/4   as User B  →  404      (cannot delete)
+GET    /api/contacts     as User B  →  0 rows   (sees nothing of A's)
+
+then, signed back in as User A:
+  contact still present, name still "Marcus Chen" — the hijack changed nothing
+```
+
+404 rather than 403 is deliberate. RLS *filters* rows rather than refusing them,
+so to User B the row genuinely does not exist — and the response cannot be used
+to work out which contact IDs belong to somebody else.
+
 ### No secrets in the repository
 
 ```
@@ -537,8 +625,15 @@ Express app used locally and hands it to Vercel.
 
 3. **Add the environment variables** in Vercel under
    *Settings → Environment Variables*, for Production, Preview, and Development:
-   `VITE_NEON_AUTH_URL`, `VITE_NEON_DATA_API_URL`, `NEON_AUTH_BASE_URL`, and
-   `NEON_DATA_API_URL`. Do not add `DATABASE_URL` — this project has no use for one.
+   `NEON_AUTH_BASE_URL` and `NEON_DATA_API_URL`. That is the complete list —
+   there are no public variables. Do not add `DATABASE_URL`; this project has no
+   use for one.
+
+   Worth knowing if you deploy from the CLI: environment variables belong to the
+   *project*, not to an individual deployment. A deployment whose variables were
+   supplied at deploy time will keep working, while the next `vercel --prod`
+   from a clean project fails with `FUNCTION_INVOCATION_FAILED` — every module
+   that reads `process.env` throws as it loads. Set them on the project first.
 
 4. **Tell Neon Auth to trust your domain.** In the Neon Console under
    *Auth → Configuration → Domains*, add your deployed URL with the protocol and
@@ -575,6 +670,16 @@ Honest about what this does not do:
   "the first Monday of each month" is not expressible.
 - **Neon Managed Better Auth and the Data API are both in Beta.** Their APIs may
   change.
+- **Auth runs through a hand-written proxy rather than the Neon browser SDK.**
+  The SDK's published config gives no way to set `credentials` on its requests,
+  which is what made sign-in fail in browsers that block third-party cookies.
+  The proxy is about sixty lines and forwards requests unchanged, but it is code
+  this project now owns, and it would need revisiting if Neon changes its cookie
+  or origin handling.
+- **Sessions last as long as Neon's cookie.** There is no "remember me" toggle
+  and no visible session expiry, so a long-idle tab discovers it is signed out
+  only on the next action — at which point it returns to the sign-in screen
+  rather than showing an error.
 - **Forwarding a user's token from a backend to the Data API is architecturally
   sound but not something Neon documents explicitly.** Their guidance frames the
   Data API as browser-facing. The behaviour follows directly from its
